@@ -1,0 +1,10 @@
+{
+  "name": "droid-magpie",
+  "plugins": [
+    {
+      "name": "droid-magpie",
+      "description": "Sync Droid's Magpie models from the live gateway.",
+      "source": "./droid-magpie"
+    }
+  ]
+}

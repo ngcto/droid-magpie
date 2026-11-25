@@ -1,0 +1,14 @@
+{
+  "SessionStart": [
+    {
+      "matcher": "startup|resume",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "python3 \"${DROID_PLUGIN_ROOT}/sync.py\" --hook",
+          "timeout": 15
+        }
+      ]
+    }
+  ]
+}
