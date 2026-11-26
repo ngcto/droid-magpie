@@ -23,24 +23,30 @@ class SyncTest(unittest.TestCase):
     def test_compact_and_merge(self):
         old = {"id": sync.PREFIX + "gpt-6", "model": "gpt-6", "displayName": "Mine", "provider": "openai"}
         missing = {"id": sync.PREFIX + "missing", "model": "missing"}
+        advertised = {"id": sync.PREFIX + "image-only", "model": "image-only"}
         unrelated = {"id": "custom:other", "model": "other"}
-        catalog = sync.compact_catalog({"data": [
+        payload = {"data": [
             model("gpt-6"), model("aside/gpt-6"), model("gpt-6", endpoints=["/v1/messages"]),
             model("claude-new"), model("grok-new", endpoints=["/v1/responses"]),
             model("deepseek-flash", output=None, endpoints=["/v1/chat/completions"]),
             model("unknown-output", output=None),
             model("embedding", output=None, endpoints=["/v1/embeddings"]),
             model("image-only", output="image", endpoints=["/v1/chat/completions"]),
-        ]})
-        updated, labels = sync.merge([unrelated, old, missing], catalog, "https://magpie.example", "${KEY}", {})
+        ]}
+        catalog = sync.compact_catalog(payload)
+        advertised_ids = {sync.PREFIX + row["id"] for row in payload["data"]}
+        updated, labels = sync.merge(
+            [unrelated, old, missing, advertised], catalog, advertised_ids, "https://magpie.example", "${KEY}",
+            {missing["id"]: "Missing"},
+        )
         self.assertEqual([entry["id"] for entry in updated], [
-            "custom:other", sync.PREFIX + "gpt-6", sync.PREFIX + "missing",
+            "custom:other", sync.PREFIX + "gpt-6", advertised["id"],
             sync.PREFIX + "claude-new", sync.PREFIX + "grok-new", sync.PREFIX + "deepseek-flash",
         ])
         self.assertEqual(updated[0], unrelated)
         self.assertEqual(updated[1]["displayName"], "Mine")
         self.assertEqual(updated[1]["maxContextLimit"], 100_000)
-        self.assertEqual(updated[2], missing)
+        self.assertEqual(updated[2], advertised)
         self.assertEqual(updated[3]["baseUrl"], "https://magpie.example")
         self.assertEqual(updated[3]["authMode"], "bearer")
         self.assertEqual(updated[4]["provider"], "openai")
@@ -49,18 +55,19 @@ class SyncTest(unittest.TestCase):
         self.assertEqual(updated[5]["provider"], "generic-chat-completion-api")
         self.assertEqual(labels[sync.PREFIX + "deepseek-flash"], "Deepseek-Flash")
         self.assertNotIn(old["id"], labels)
+        self.assertNotIn(missing["id"], labels)
 
     def test_managed_labels_update_but_custom_labels_stay(self):
         alias = "deepseek-v4.1-flash"
         model_id = sync.PREFIX + alias
         old = {"id": model_id, "model": alias, "displayName": "Old Label"}
         catalog = sync.compact_catalog({"data": [model(alias) | {"display_name": "DeepSeek V4.1 Flash 1017"}]})
-        updated, labels = sync.merge([old], catalog, "https://magpie.example", "fixture", {model_id: "Old Label"})
+        updated, labels = sync.merge([old], catalog, {model_id}, "https://magpie.example", "fixture", {model_id: "Old Label"})
         self.assertEqual(updated[0]["displayName"], "DeepSeek V4.1 Flash 1017")
         self.assertEqual(labels[model_id], updated[0]["displayName"])
         updated[0]["displayName"] = "My model"
         catalog[model_id]["display_name"] = "New upstream label"
-        overridden, next_labels = sync.merge(updated, catalog, "https://magpie.example", "fixture", labels)
+        overridden, next_labels = sync.merge(updated, catalog, {model_id}, "https://magpie.example", "fixture", labels)
         self.assertEqual(overridden[0]["displayName"], "My model")
         self.assertEqual(next_labels, labels)
 
@@ -69,7 +76,11 @@ class SyncTest(unittest.TestCase):
             path = Path(directory) / "settings.json"
             selected = sync.PREFIX + "gpt-6"
             path.write_text(json.dumps({
-                "customModels": [{"id": selected, "model": "gpt-6", "baseUrl": "https://magpie.example/v1", "apiKey": "${KEY}"}],
+                "customModels": [
+                    {"id": selected, "model": "gpt-6", "baseUrl": "https://magpie.example/v1", "apiKey": "${KEY}"},
+                    {"id": sync.PREFIX + "removed", "model": "removed", "baseUrl": "https://magpie.example/v1", "apiKey": "${KEY}"},
+                    {"id": "custom:other/removed", "model": "removed"},
+                ],
                 "sessionDefaultSettings": {"model": selected},
                 "other": True,
             }))
@@ -84,6 +95,8 @@ class SyncTest(unittest.TestCase):
                 updated = path.read_bytes()
                 self.assertEqual(path.stat().st_mode & 0o777, 0o600)
                 self.assertEqual(json.loads(updated)["sessionDefaultSettings"], {"model": selected})
+                self.assertEqual([row["id"] for row in json.loads(updated)["customModels"]],
+                                 [selected, "custom:other/removed", sync.PREFIX + "gpt-7"])
                 self.assertNotIn(b"fixture", updated)
                 mtime = path.stat().st_mtime_ns
                 self.assertIn("unchanged", sync.sync(path))

@@ -99,8 +99,9 @@ def compact_catalog(payload):
     return models
 
 
-def merge(entries, catalog, root, key, last_labels):
-    labels = last_labels.copy()
+def merge(entries, catalog, advertised_ids, root, key, last_labels):
+    stale = {entry["id"] for entry in entries if owned(entry) and entry["id"] not in advertised_ids}
+    labels = {model_id: label for model_id, label in last_labels.items() if model_id not in stale}
 
     def update(model, previous=None):
         alias = model["id"]
@@ -140,12 +141,11 @@ def merge(entries, catalog, root, key, last_labels):
         entry["noImageSupport"] = "image" not in model["modalities"]["input"]
         return entry
 
-    # An alias may be temporarily unavailable or still selected in a chat.
-    # Keep it, its position, and any existing per-model routing overrides.
     seen = {entry.get("id") for entry in entries}
     updated = [
         update(catalog[entry["id"]], entry) if entry.get("id") in catalog else entry
         for entry in entries
+        if entry.get("id") not in stale
     ] + [update(model) for model_id, model in catalog.items() if model_id not in seen]
     return updated, labels
 
@@ -189,11 +189,13 @@ def sync(path, *, dusk=False, check=False):
         if not connection:
             return "No existing Magpie BYOK entries found"
         root, template, token = connection
-        catalog = compact_catalog(get_json(root + "/v1/models", {"Authorization": "Bearer " + token}))
+        payload = get_json(root + "/v1/models", {"Authorization": "Bearer " + token})
+        catalog = compact_catalog(payload)
+        advertised_ids = {PREFIX + row["id"] for row in payload["data"] if isinstance(row.get("id"), str)}
         label_path = path.with_name("magpie-sync-labels.json")
         label_bytes = label_path.read_bytes() if label_path.exists() else None
         labels = json.loads(label_bytes) if label_bytes is not None else {}
-        updated, next_labels = merge(entries, catalog, root, template, labels)
+        updated, next_labels = merge(entries, catalog, advertised_ids, root, template, labels)
         changed = entries != updated
         if changed and not check:
             settings["customModels"] = updated

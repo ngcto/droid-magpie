@@ -6,10 +6,12 @@ only bare text aliases, not provider-qualified duplicates or media models.
 If a model advertises text input and a chat endpoint but omits output
 metadata, it is included. The sync tracks the labels it writes in
 `magpie-sync-labels.json` alongside Droid settings so upstream renames are
-reflected without overwriting custom labels. Routes and model selections
-are kept. The sync intentionally
-does not delete aliases missing from a response, since a chat might still use
-them or the upstream catalog might be temporarily incomplete.
+reflected without overwriting custom labels. The sync removes only saved
+`custom:magpie/` entries absent from the gateway's `/v1/models` response.
+It leaves unrelated models, advertised Magpie entries, routing overrides on
+retained entries, and model selections alone. A selection that references a
+removed alias may need to be changed manually. An invalid response or one
+with no importable text aliases leaves the settings untouched.
 
 On macOS or Linux with Python 3.9+, install the plugin in Droid:
 
